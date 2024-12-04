@@ -14,9 +14,10 @@ class vector_udp:
                      'get_error': 0x41}
 
     def __init__(self):
+        self.sha256_checksum = None
         self.num_packets = None
         self.max_packet_size = None
-        self.json_bytes = None
+        self.byte_stream = None
         self.send_socket = None
 
     def udp_pack(self, CMD_max_payload,
@@ -33,7 +34,6 @@ class vector_udp:
             payload = [CMD_max_payload]
 
         CMD_payload_lenth = len(payload)
-
         CMD_MSG = [CMD_MAGIC_WORD, CMD_ID, CMD_Counter, CMD_payload_lenth, CMD_Multiple, Reserve,
                    Sequence_Number] + payload
         message = struct.pack(">QIHHBBH%dB" % CMD_payload_lenth, *CMD_MSG)
@@ -46,41 +46,45 @@ class vector_udp:
         target_port = 1234  # 目标端口号，可根据需要调整
         self.send_socket.connect((target_ip, target_port))
 
-    def json_file(self, files='', packet_size=100):
-        # 读取JSON文件内容
-        with open(files, 'r') as f:
-            json_data = json.load(f)
-        # 将JSON数据转换为字节流
-        self.json_bytes = json.dumps(json_data)
-        print(self.json_bytes)
+    def file_load(self, files='', packet_size=10):
+        try:
+            with open(files, 'rb') as f:
+                self.byte_stream = f.read()
+                print(self.byte_stream)
+        except FileNotFoundError:
+            print(f"文件 {files} 未找到，请检查文件路径是否正确。")
+        except Exception as e:
+            print(f"发生其他错误：{e}")
+
         # 设置每个数据包的最大大小（可根据实际网络情况调整）
         self.max_packet_size = packet_size
+        print(f"文件长度{len(self.byte_stream)}, 每个包最大长度{self.max_packet_size}")
         # 计算需要发送的数据包数量
-        self.num_packets = math.ceil(len(self.json_bytes) / self.max_packet_size)
+        self.num_packets = math.ceil(len(self.byte_stream) / self.max_packet_size)
         print(f"除第一个包，文件一共分为{self.num_packets}个包")
-
-        self.sha256_checksum = hashlib.sha256(self.json_bytes.encode('utf-8')).hexdigest()
-        print(f"checksum={self.sha256_checksum}")
+        # 计算文件的checksum值
+        self.sha256_checksum = hashlib.sha256(self.byte_stream).hexdigest()
+        # print(f"checksum={self.sha256_checksum}")
 
     def files_transfer(self):
         """
         函数用于通过UDP发送数据
         """
+        response = []
         try:
             for i in range(self.num_packets + 1):
                 print(f"第{i}个包")
                 if i == 0:
                     tmp = '/home/camera_config/config.json'
                     msg = self.udp_pack(CMD_Counter=i, CMD_max_payload=bytes(tmp, encoding='utf-8'))
-                    self.send_socket.send(msg)
+                    self.send_socket.sendall(msg)
                     print("数据已发送:", msg)
                     response = self.send_socket.recv(1024)
                     print('接收SOC响应为：', response)
                 else:
                     cnt = i - 1
                     if response[-1] == 0:
-                        payload = self.json_bytes[cnt * self.max_packet_size:(cnt + 1) * self.max_packet_size]
-                        payload = bytes(payload, encoding='utf-8')
+                        payload = self.byte_stream[cnt * self.max_packet_size:(cnt + 1) * self.max_packet_size]
                         msg = self.udp_pack(CMD_ID=0x102, CMD_Counter=i, CMD_max_payload=payload,
                                             Sequence_Number=i)
                         print(f"{cnt * self.max_packet_size},{(cnt + 1) * self.max_packet_size}, 数据：{msg}")
@@ -91,7 +95,9 @@ class vector_udp:
             msg = self.udp_pack(CMD_ID=0x103, CMD_Counter=self.num_packets + 1,
                                 CMD_max_payload=self.sha256_checksum.encode('utf-8'),
                                 Sequence_Number=self.num_packets + 1)
-            self.send_socket.send(msg)
+
+            print(f"第{self.num_packets + 1}个包")
+            self.send_socket.sendall(msg)
             print("数据已发送:", msg)
             response = self.send_socket.recv(1024)
             print('接收SOC响应为：', response)
@@ -116,7 +122,7 @@ if __name__ == '__main__':
     a = vector_udp()
 
     a.udp_config()
-    a.json_file(files='config.json', packet_size=100)
-    # a.files_transfer()
+    a.file_load(files='asm.xml', packet_size=1024)
+    a.files_transfer()
     # a.Authorization_check()
-    a.Start_RTP_transfer()
+    # a.Start_RTP_transfer()
